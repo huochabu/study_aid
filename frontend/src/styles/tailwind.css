@@ -1,0 +1,104 @@
+@import "tailwindcss";
+@reference "tailwindcss";
+
+/* 基础 */
+html,
+body,
+#app {
+    height: 100%;
+}
+
+body {
+    @apply bg-zinc-50 text-zinc-900 antialiased;
+}
+
+/* 容器 */
+.container-page {
+    @apply mx-auto w-full max-w-5xl px-6;
+}
+
+/*  组件类：只能由 utility 组成，不能引用自己 */
+.card {
+    @apply rounded-2xl border border-zinc-200 bg-white shadow-sm;
+}
+
+.card-hover {
+    @apply transition hover:shadow-md hover:bg-zinc-50/50;
+}
+
+.pill {
+    @apply inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-2 shadow-sm;
+}
+
+.chip {
+    @apply rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs text-zinc-600;
+}
+
+.btn {
+    @apply inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-medium transition active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-zinc-900/10;
+}
+
+.btn-primary {
+    @apply bg-zinc-900 text-white hover:bg-zinc-800;
+}
+
+.btn-secondary {
+    @apply border border-zinc-200 bg-white hover:bg-zinc-50;
+}
+
+/* entry/news 也别 @apply card，直接展开 */
+.entry {
+    @apply rounded-2xl border border-zinc-200 bg-white shadow-sm transition hover:shadow-md hover:bg-zinc-50/50 flex min-h-[92px] items-center gap-4 p-5;
+}
+
+.entry-icon {
+    @apply grid h-12 w-12 place-items-center rounded-2xl bg-zinc-100 text-zinc-700 font-bold;
+}
+
+.news {
+    @apply rounded-2xl border border-zinc-200 bg-white shadow-sm flex items-start gap-3 p-5;
+}
+
+.news-icon {
+    @apply grid h-10 w-10 place-items-center rounded-2xl bg-zinc-100 text-zinc-700;
+}
+
+/* 更细腻的边框与阴影 */
+.card,
+.pill,
+.entry,
+.news {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .06);
+}
+
+/* hover 更像产品：轻提起 */
+.card-hover:hover,
+.entry:hover {
+    transform: translateY(-1px);
+}
+
+/* 工具按钮 */
+.tool-btn {
+    @apply inline-flex items-center justify-center rounded-lg border border-transparent px-2 py-1 text-zinc-600 transition hover:bg-white hover:text-zinc-900 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/10 disabled:opacity-30 disabled:cursor-not-allowed;
+}
+
+.dropdown-item {
+    @apply flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-700 transition hover:bg-zinc-50 hover:text-zinc-900; }
+
+.btn-danger {
+  @apply bg-red-600 text-white hover:bg-red-500;
+}
+
+.btn-icon {
+  @apply inline-flex items-center justify-center rounded-xl border border-zinc-200 bg-white
+         h-10 w-10 text-zinc-700 shadow-sm transition
+         hover:bg-zinc-50 hover:shadow-md;
+}
+
+.btn-icon-danger {
+  @apply bg-red-50 text-red-700 border-red-200 hover:bg-red-100;
+}
+
+.btn-sm {
+  @apply h-9 px-3 rounded-lg text-sm;
+}

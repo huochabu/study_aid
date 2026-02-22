@@ -7,8 +7,12 @@ import httpx
 from dotenv import load_dotenv
 from typing import List, Dict, Any
 
-# 加载环境变量
-load_dotenv()
+# 获取项目根目录
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(BASE_DIR))
+
+# 加载根目录的.env文件
+load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
 
 # 配置日志（便于调试推理文本接收/解析过程）
 logger = logging.getLogger(__name__)
@@ -27,7 +31,7 @@ if not DASHSCOPE_API_KEY:
 # ======================
 def extract_mindmap_text_from_reasoning(reasoning_steps: List[str]) -> str:
     """
-    从推理步骤中精准提取思维导图文本（核心：只取带层级符号的纯文本）
+    从推理步骤中精准提取思维导图文本（核心：只取带层级符号的纯文本或Markdown列表）
     :param reasoning_steps: 后端推理阶段返回的原始文本列表
     :return: 纯思维导图树形文本（无多余内容）
     """
@@ -35,51 +39,114 @@ def extract_mindmap_text_from_reasoning(reasoning_steps: List[str]) -> str:
         logger.warning("推理步骤为空，无文本可提取")
         return ""
 
-    # 遍历所有推理步骤，找包含思维导图特征的文本
+    # Strategy 1: Look for explicit header "### 树形思维导图文本描述"
+    for step in reasoning_steps:
+        if not isinstance(step, str):
+            continue
+            
+        if "### 树形思维导图文本描述" in step:
+            logger.info("找到明确的 '树形思维导图文本描述' 标题")
+            parts = step.split("### 树形思维导图文本描述")
+            if len(parts) > 1:
+                content_after = parts[1]
+                
+                # Simple extraction: split by newlines, take lines that look like list items
+                lines = content_after.split('\n')
+                mindmap_lines = []
+                started = False
+                in_code_block = False
+                
+                for line in lines:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                        
+                    if stripped.startswith("```"):
+                        in_code_block = not in_code_block
+                        continue
+                        
+                    if stripped.startswith("#"): # Next section header
+                        # If we already found list items, stop.
+                        # If we haven't found any yet, ignore (maybe some intermediate header?)
+                        if started: 
+                             break 
+                        continue 
+                    
+                    # Check for list item (- or * or +)
+                    if re.match(r'^[\s]*[-*+]\s+', line):
+                        started = True
+                        mindmap_lines.append(line)
+                    elif started:
+                        # If we already started, and encounter a non-list line:
+                        # If it has indentation, it might be a multiline content (we accept it as note)
+                        # If it has NO indentation, it effectively ends the list.
+                        if not re.match(r'^[\s]', line):
+                             break
+                        mindmap_lines.append(line)
+                
+                if mindmap_lines:
+                    text = "\n".join(mindmap_lines)
+                    logger.info(f"成功通过标题提取思维导图文本，长度：{len(text)}")
+                    return text
+
+    # Strategy 2: Look for ASCII Tree or Markdown List candidates
     mindmap_candidates = []
     for step in reasoning_steps:
         if not isinstance(step, str):
             continue
         
-        # 特征1：包含树形层级符号（├──/└──/│）；特征2：包含核心标题（技术内容分析）
-        if "技术内容分析" in step and any(char in step for char in ["├──", "└──", "│"]):
-            # 预处理：移除代码块标记（```）、多余换行、空白符
-            step_clean = re.sub(r'```[\s\S]*?```', '', step)  # 移除```包裹的内容
-            step_clean = re.sub(r'\n{3,}', '\n', step_clean)  # 合并多余换行
+        # Check for ASCII tree chars
+        has_tree_chars = any(char in step for char in ["├──", "└──", "│"])
+        
+        # Check for Markdown list structure (at least 3 lines starting with - or *)
+        lines = step.split('\n')
+        # Count lines that look like list items
+        list_item_count = sum(1 for l in lines if re.match(r'^\s*[-*+]\s+', l))
+        has_markdown_list = list_item_count >= 3
+        
+        if has_tree_chars or has_markdown_list:
+            # Clean up code blocks tokens but keep content
+            # Remove ```markdown or ```
+            step_clean = re.sub(r'```\w*\n?', '', step)
+            step_clean = re.sub(r'```', '', step_clean)
+            step_clean = re.sub(r'\n{3,}', '\n', step_clean)
             mindmap_candidates.append(step_clean)
 
     if not mindmap_candidates:
         logger.warning("推理步骤中未找到符合特征的思维导图文本")
         return ""
 
-    # 取最长的候选文本（最完整的思维导图）
+    # Pick the longest candidate
     raw_mindmap_text = max(mindmap_candidates, key=len)
     logger.info(f"成功从推理步骤提取思维导图文本，长度：{len(raw_mindmap_text)}")
 
-    # 进一步提纯：只保留从"技术内容分析"开始到非树形文本结束的部分
+    # Refine extraction (trim surrounding text)
     lines = [line for line in raw_mindmap_text.split('\n') if line.strip()]
-    start_idx = -1
-    end_idx = len(lines)
     
-    # 定位开始行（技术内容分析）
+    # Try to find the first line that looks like a tree node or list item
+    first_tree_idx = -1
     for i, line in enumerate(lines):
-        if line.strip().startswith("技术内容分析"):
-            start_idx = i
+        # ASCII tree or Markdown List Item
+        if any(char in line for char in ["├──", "└──", "│"]) or re.match(r'^\s*[-*+]\s+', line):
+            first_tree_idx = i
             break
-    
-    if start_idx == -1:
-        logger.warning("未找到思维导图根节点（技术内容分析）")
-        return ""
-    
-    # 定位结束行（非树形文本）
-    for i in range(start_idx + 1, len(lines)):
-        line = lines[i]
-        # 非树形文本判定：无层级符号 + 非空
-        if line.strip() and not any(char in line for char in ["├──", "└──", "│", "├", "└"]):
-            end_idx = i
+            
+    if first_tree_idx == -1:
+        return raw_mindmap_text
+
+    # Backtrack to find potential root (headline before the list)
+    start_idx = first_tree_idx
+    for i in range(first_tree_idx - 1, -1, -1):
+        line = lines[i].strip()
+        if not line or line.startswith("---") or line.startswith("==="):
             break
-    
-    # 提取纯思维导图文本
+        if line.startswith("#"): # Header
+            start_idx = i 
+            break
+        # Also include immediately preceding text line as prompt/root
+        start_idx = i 
+
+    end_idx = len(lines)
     pure_mindmap_lines = lines[start_idx:end_idx]
     pure_mindmap_text = "\n".join(pure_mindmap_lines).strip()
     
@@ -95,7 +162,6 @@ def parse_mindmap_hierarchy(raw_text: str) -> Dict[str, Any]:
     :param raw_text: 提纯后的思维导图树形文本
     :return: 带层级的JSON结构（root + children + id）
     """
-    # 兜底结构（解析失败时返回）
     fallback_root = {
         "id": "root",
         "topic": "技术内容分析",
@@ -109,45 +175,61 @@ def parse_mindmap_hierarchy(raw_text: str) -> Dict[str, Any]:
     if not lines:
         return {"root": fallback_root}
 
-    # 初始化解析器
     root = None
-    stack = []  # 栈：(当前节点, 当前缩进长度)
-    node_id = 1  # 全局节点ID（保证前端唯一性）
-
-    # 预计算缩进单位（适配任意缩进：2/4/6个空格 + 符号）
+    stack = []
+    node_id = 1
+    
+    # 预计算缩进单位
     indent_units = []
-    for line in lines[1:]:  # 跳过根节点，分析子节点缩进
-        prefix = re.match(r'^([\s│├└─]+)', line)
+    pattern_prefix = r'^([\s│├└─\-*+]+)'
+    
+    for line in lines[1:]:
+        prefix = re.match(pattern_prefix, line)
         if prefix:
             indent_units.append(len(prefix.group(1)))
-    # 取最小缩进为单位（适配任意缩进格式）
-    base_indent = min(indent_units) if indent_units else 4
+    
+    base_indent = min(indent_units) if indent_units else 2 
 
-    # 逐行解析
     for line in lines:
         line_stripped = line.strip()
         if not line_stripped:
             continue
 
-        # 1. 解析根节点（无缩进）
-        if not root and len(line) == len(line_stripped):  # 无缩进 = 根节点
-            root = {
-                "id": "root",
-                "topic": line_stripped,
-                "children": []
-            }
-            stack.append((root, 0))  # (节点, 缩进长度)
-            logger.info(f"解析根节点：{line_stripped}")
-            continue
-
         if not root:
-            continue
+             # Skip markdown headers before finding real content
+             if line_stripped.startswith("###") or line_stripped.startswith("==="):
+                 continue
 
-        # 2. 解析子节点（有缩进）
-        # 提取前缀（缩进+符号）和节点文本
-        prefix_match = re.match(r'^([\s│├└─]+)', line)
+             root_topic = line_stripped
+             # Remove leading chars if any
+             root_topic = re.sub(r'^[-*+]\s+', '', root_topic)
+             
+             # If root topic is still empty or looks like a separator, skip
+             if not root_topic or root_topic.startswith("---"):
+                 continue
+
+             root = {
+                "id": "root",
+                "topic": root_topic,
+                "children": []
+             }
+             
+             root_prefix = re.match(pattern_prefix, line)
+             root_indent = len(root_prefix.group(1)) if root_prefix else 0
+             
+             stack.append((root, root_indent))
+             logger.info(f"解析根节点：{root_topic}")
+             continue
+
+        # 2. 解析子节点
+        prefix_match = re.match(pattern_prefix, line)
         if not prefix_match:
-            logger.warning(f"跳过非层级行：{line}")
+            # 非层级行，作为 note
+            if stack:
+                last_node = stack[-1][0]
+                if "notes" not in last_node:
+                    last_node["notes"] = ""
+                last_node["notes"] += "\n" + line.strip()
             continue
         
         prefix = prefix_match.group(1)
@@ -155,38 +237,33 @@ def parse_mindmap_hierarchy(raw_text: str) -> Dict[str, Any]:
         if not topic:
             continue
 
-        # 计算当前缩进长度（核心：动态适配）
         current_indent = len(prefix)
-        # 计算相对层级（当前缩进 / 基础缩进单位）
-        current_level = int(current_indent / base_indent)
-
         # 3. 维护栈结构（找到当前节点的父节点）
         # 弹出栈中缩进 >= 当前缩进的节点（回到父节点层级）
         while stack and stack[-1][1] >= current_indent:
             stack.pop()
+            
+        if not stack:
+             parent_node = root
+             # Fallback to root as parent if stack is empty
+             stack.append((root, -1))
+        
+        parent_node = stack[-1][0]
 
-        # 4. 创建子节点（带唯一ID）
-        parent_node = stack[-1][0] if stack else root
         child_node = {
             "id": f"node-{node_id}",
             "topic": topic,
-            "children": []
+            "children": [],
+            "notes": ""
         }
         node_id += 1
 
-        # 5. 添加到父节点的children中
         parent_node["children"].append(child_node)
-        # 压入栈（供后续子节点使用）
         stack.append((child_node, current_indent))
 
-        logger.debug(f"解析节点：层级{current_level} | {topic}（父节点：{parent_node['topic']}）")
-
-    # 兜底：解析失败返回默认结构
-    if not root or len(root["children"]) == 0:
-        logger.warning("思维导图层级解析失败，返回默认结构")
+    if not root:
         return {"root": fallback_root}
 
-    logger.info(f"层级解析完成：根节点下有 {len(root['children'])} 个一级节点")
     return {"root": root}
 
 # ======================
@@ -323,33 +400,11 @@ if __name__ == "__main__":
     mock_reasoning_steps = [
         "一些前置分析内容...",
         """
-技术内容分析
-├── 编译器问题
-│   ├── 错误信息
-│   │   ├── Unknown compiler(s)
-│   │   ├── [winError 2]
-│   │   └── unknown language meson
-│   ├── 根因推断
-│   │   ├── 原因
-│   │   │   ├── 编译器未正确安装
-│   │   │   ├── 路径设置不正确
-│   │   │   └── 语言设置不正确
-│   │   └── 解决方法
-│   │       ├── 确保编译器已安装
-│   │       ├── 配置环境变量
-│   │       ├── 检查 Meson 构建文件
-│   │       └── 查看完整日志
-└── FastAPI 模块未找到
-    ├── 错误信息
-    │   └── ModuleNotFoundError
-    ├── 根因推断
-    │   ├── 原因
-    │   │   └── FastAPI 未安装
-    │   └── 解决方法
-    │       ├── 安装 FastAPI 模块
-    │       ├── 激活虚拟环境
-    │       └── 检查 PYTHONPATH
-        一些后置内容...
+        ### 树形思维导图文本描述
+        - 项目简介
+          - 目标与范围
+            - 目标
+              - 开发基于Multi-Agent RAG技术的多模态运维知识中枢系统
         """,
         "一些后续分析内容..."
     ]

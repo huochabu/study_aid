@@ -1,6 +1,12 @@
 from dotenv import load_dotenv
-load_dotenv()
 import os
+
+# 获取项目根目录
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(BASE_DIR))
+
+# 加载根目录的.env文件
+load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
 import re
 import json
 import uuid
@@ -28,13 +34,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ======================
-# PaddleOCR 离线配置
-# ======================
-os.environ["PADDLEOCR_HOME"] = "E:/documap/.paddleocr_cache"
-DET_MODEL_DIR = r"E:\documap\models\paddleocr\ch_PP-OCRv4_det_infer"
-REC_MODEL_DIR = r"E:\documap\models\paddleocr\ch_PP-OCRv4_rec_infer"
-CLS_MODEL_DIR = r"E:\documap\models\paddleocr\ch_ppocr_mobile_v2.0_cls_infer"
+# 使用统一的OCR服务
+from backend.services.ocr_service import ocr_service
 
 app = FastAPI(title="DocMind Pro", version="2.0")
 
@@ -48,7 +49,7 @@ app.add_middleware(
 )
 
 # 上传目录
-UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR = PROJECT_ROOT / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 # 校验阿里云API Key
@@ -82,38 +83,10 @@ def extract_text_from_pdf(pdf_path: str) -> str:
 def extract_text_from_image(image_path: str) -> str:
     """提取图片文本（OCR）"""
     try:
-        for model_dir in [DET_MODEL_DIR, REC_MODEL_DIR, CLS_MODEL_DIR]:
-            if not os.path.exists(model_dir):
-                raise FileNotFoundError(f"模型目录不存在: {model_dir}")
-        
-        from paddleocr import PaddleOCR
-        ocr = PaddleOCR(
-            use_angle_cls=True,
-            lang="ch",
-            use_gpu=False,
-            det_model_dir=DET_MODEL_DIR,
-            rec_model_dir=REC_MODEL_DIR,
-            cls_model_dir=CLS_MODEL_DIR,
-            download_model=False,
-            show_log=False
-        )
         logger.info(f"开始解析图片: {image_path}")
-        result = ocr.ocr(image_path, cls=True)
-        text = ""
-        if result and isinstance(result, list) and len(result) > 0:
-            for line in result:
-                if line and isinstance(line, list):
-                    for word_info in line:
-                        if word_info and len(word_info) >= 2:
-                            text += word_info[1][0] + "\n"
-        text = text.strip()
+        text = ocr_service.extract_text(image_path)
         logger.info(f"提取的文本: {text if text else '空'}")
         return text
-    except ImportError:
-        raise HTTPException(status_code=500, detail="缺少OCR依赖：请执行 pip install paddleocr")
-    except FileNotFoundError as e:
-        logger.error(f"模型文件不存在: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"OCR模型文件不存在: {str(e)}")
     except Exception as e:
         logger.error(f"图片OCR失败: {str(e)}")
         raise HTTPException(status_code=400, detail=f"图片OCR失败: {str(e)}")
@@ -234,105 +207,7 @@ def build_mindmap_data(agent_result: dict) -> dict:
 # ======================
 # API接口
 # ======================
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """文件上传+分析接口（增强：同时构建RAG索引）"""
-    try:
-        logger.info(f"开始处理文件: {file.filename}, 类型: {file.content_type}")
-        file_id = str(uuid.uuid4())
-        ext = file.filename.split('.')[-1].lower()
-        file_path = UPLOAD_DIR / f"{file_id}.{ext}"
-        
-        file_content = await file.read()
-        with open(file_path, "wb") as f:
-            f.write(file_content)
-        logger.info(f"文件已保存到: {file_path}")
-
-        text = ""
-        if ext in ["jpg", "jpeg", "png"]:
-            text = extract_text_from_image(str(file_path))
-        elif ext == "pdf":
-            text = extract_text_from_pdf(str(file_path))
-        elif ext in ["txt", "log"]:
-            try:
-                text = file_content.decode("utf-8")
-            except UnicodeDecodeError:
-                text = file_content.decode("gbk", errors="replace")
-        else:
-            raise HTTPException(status_code=400, detail="不支持的文件格式（仅支持PDF/TXT/图片）")
-
-        logger.info(f"提取的文本长度: {len(text)}")
-        
-        # === 新增：使用 Haystack 构建向量索引（替换手写 RAG）===
-        # 清空整个 document store（简化版：单文件场景）
-        document_store.delete_documents()
-        
-        # 智能分块（按段落，fallback 到固定长度）
-        paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
-        if not paragraphs:
-            paragraphs = [text[i:i+500] for i in range(0, len(text), 500)] or [""]
-        
-        docs = [
-            Document(
-                content=para,
-                meta={"source": file.filename, "page": idx + 1, "file_id": file_id}
-            )
-            for idx, para in enumerate(paragraphs)
-        ]
-        
-        indexing_pipeline.run({"embedder": {"documents": docs}})
-        logger.info(f"已索引 {len(docs)} 个文档块到 Haystack")
-        
-        # 保存原始文本（用于调试或未来扩展）
-        FILE_TEXT_STORE[file_id] = text
-        
-        # 原有 AI 分析流程
-        analysis_result = await analyze_with_qwen(text)
-        mindmap_data = build_mindmap_data(analysis_result)
-        knowledge_graph = build_knowledge_graph(analysis_result)
-
-        response_data = {
-            "file_id": file_id,
-            "filename": file.filename,
-            "mindmap": mindmap_data,
-            "knowledge_graph": knowledge_graph,
-            "extracted_text": text
-        }
-        
-        logger.info("文件处理完成，返回响应")
-        return Response(
-            content=json.dumps(response_data, ensure_ascii=False),
-            media_type="application/json"
-        )
-    
-    except HTTPException as e:
-        logger.error(f"HTTP异常: {e.status_code} - {e.detail}")
-        error_response = {
-            "file_id": "",
-            "filename": file.filename if 'file' in locals() else "",
-            "mindmap": {"root": {"id": "root", "topic": f"处理失败: {e.detail}", "children": []}},
-            "knowledge_graph": {"nodes": [], "edges": []},
-            "extracted_text": ""
-        }
-        return Response(
-            content=json.dumps(error_response, ensure_ascii=False),
-            media_type="application/json",
-            status_code=e.status_code
-        )
-    except Exception as e:
-        logger.error(f"服务内部错误: {str(e)}", exc_info=True)
-        error_response = {
-            "file_id": "",
-            "filename": file.filename if 'file' in locals() else "",
-            "mindmap": {"root": {"id": "root", "topic": f"服务内部错误: {str(e)}", "children": []}},
-            "knowledge_graph": {"nodes": [], "edges": []},
-            "extracted_text": ""
-        }
-        return Response(
-            content=json.dumps(error_response, ensure_ascii=False),
-            media_type="application/json",
-            status_code=500
-        )
+# 注意：这个文件中的/upload接口已经移到main.py中，这里不再重复定义
 
 # ======================
 # 新增：RAG 问答接口
@@ -368,6 +243,7 @@ async def ask_question(
     
     return response
 
+# 健康检查接口保持不变，但不应该作为独立服务运行
 @app.get("/")
 async def health_check():
-    return {"status": "success", "message": "DocMind Pro 后端运行中"}
+346|     return {"status": "success", "message": "DocMind Pro RAG 服务运行中"}

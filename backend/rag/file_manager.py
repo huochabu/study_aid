@@ -2,10 +2,15 @@
 import os
 import json
 from pathlib import Path
+from typing import List
+
+# 获取项目根目录
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(BASE_DIR))
 
 def get_parsed_text_from_file(file_id: str) -> List[str]:
-    # 假设解析后的文本保存在 uploads/parsed/{file_id}.json
-    parsed_path = Path("uploads") / "parsed" / f"{file_id}.json"
+    # 解析后的文本保存在根目录下的 uploads/parsed/{file_id}.json
+    parsed_path = Path(PROJECT_ROOT) / "uploads" / "parsed" / f"{file_id}.json"
     if not parsed_path.exists():
         return []
 
