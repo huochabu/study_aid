@@ -7,6 +7,8 @@
 
 study-aid是一个功能丰富的智能学习辅助平台，支持多种文档和视频内容的上传、解析、AI分析和可视化展示。通过集成先进的AI技术，能够自动提取内容、生成知识图谱和思维导图，提供PDF处理功能，并支持智能问答等多种学习辅助功能。演示视频见https://www.bilibili.com/video/BV1bZfMBQER1/?spm_id_from=333.1387.0.0&vd_source=3a088f8f77f388c1b1895e33ba8581a8
 
+<img width="2531" height="1297" alt="屏幕截图 2026-02-23 110049" src="https://github.com/user-attachments/assets/d0fd402a-e815-467f-846e-522c82c106d3" />
+
 ## 🚀 功能特性
 
 ### 🏗️ 技术架构
