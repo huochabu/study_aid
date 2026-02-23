@@ -5,7 +5,7 @@
 [![Vue](https://img.shields.io/badge/Vue-3.0%2B-green)](https://vuejs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-red)](https://fastapi.tiangolo.com/)
 
-study-aid是一个功能丰富的智能学习辅助平台，支持多种文档和视频内容的上传、解析、AI分析和可视化展示。通过集成先进的AI技术，能够自动提取内容、生成知识图谱和思维导图，提供PDF处理功能，并支持智能问答等多种学习辅助功能。
+study-aid是一个功能丰富的智能学习辅助平台，支持多种文档和视频内容的上传、解析、AI分析和可视化展示。通过集成先进的AI技术，能够自动提取内容、生成知识图谱和思维导图，提供PDF处理功能，并支持智能问答等多种学习辅助功能。演示视频见https://www.bilibili.com/video/BV1bZfMBQER1/?spm_id_from=333.1387.0.0&vd_source=3a088f8f77f388c1b1895e33ba8581a8
 
 ## 🚀 功能特性
 
